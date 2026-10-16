@@ -74,6 +74,8 @@ input[type=text],input[type=password],select,textarea{width:100%;border:1px soli
 textarea{resize:vertical;min-height:110px;line-height:1.55}
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:.75}
 .lab-row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.yt{display:flex;flex-direction:column;gap:12px;background:var(--surface-2);border:1px dashed var(--line);border-radius:10px;padding:14px}
+.hint-inline{font-size:13px;color:var(--muted)}
 .linkbtn{background:none;border:0;padding:0;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 
 /* 칩 */
@@ -256,6 +258,20 @@ pre#output{margin:0;padding:16px;overflow:auto;white-space:pre-wrap;word-break:b
           <textarea id="content" placeholder="게임 진행 방식, 플레이어가 하는 행동, 끝나는 조건을 몇 줄로 적어 주세요."></textarea>
         </div>
         <div class="field"><label for="std">성취기준 (선택)</label><input type="text" id="std" placeholder="예: [4수01-xx] 성취기준 문장을 붙여넣기"></div>
+        <div class="yt">
+          <div class="field">
+            <label for="video">원작 보드게임 설명 영상 (유튜브 링크, 선택)</label>
+            <div class="inline">
+              <input type="text" id="video" placeholder="https://www.youtube.com/watch?v=…">
+              <button type="button" class="btn" id="videoBtn">영상에서 규칙 가져오기</button>
+            </div>
+            <p class="hint" style="margin:0">Gemini가 영상을 보고 규칙과 ‘대략적인 내용’ 초안을 채웁니다. 공개 영상만 되고, 30초~2분쯤 걸립니다. 무료 등급은 하루 영상 8시간까지입니다.</p>
+          </div>
+          <div class="field">
+            <div class="lab-row"><label for="rules" class="lab">원작 규칙 (선택)</label><button type="button" class="linkbtn" id="undoRules" hidden>되돌리기</button></div>
+            <textarea id="rules" style="min-height:90px" placeholder="영상에서 가져오거나 직접 적기. 여기 적은 규칙이 프롬프트의 ‘원작 규칙’ 항목으로 들어갑니다."></textarea>
+          </div>
+        </div>
       </fieldset>
 
       <fieldset>
@@ -445,9 +461,9 @@ const EXAMPLE = {
   title:'분수 피자 가게', topic:'분모가 같은 분수의 크기 비교와 덧셈',
   content:'- 손님이 주문한 피자 양(분수)을 보고 알맞은 조각 수를 골라 피자를 완성함\n- 두 손님 중 누가 더 많이 먹는지 고르는 "비교 주문"이 중간중간 섞여 나옴\n- 주문을 맞힐 때마다 가게 매출이 오르고, 매출 목표를 채우면 다음 동네로 가게를 넓힘\n- 마지막 단계에서는 학급 전체 매출을 합쳐 "피자 축제" 목표를 채움',
   std:'', grade:'e4', subject:'수학', subjectEtc:'', play:'solo', device:'tablet', duration:'15분', qcount:'20',
-  gami:['score','quest','unlock','goal'], target:'claude', extra:''
+  gami:['score','quest','unlock','goal'], target:'claude', extra:'', video:'', rules:''
 };
-const EMPTY = {title:'',topic:'',content:'',std:'',grade:'e3',subject:'국어',subjectEtc:'',play:'solo',device:'tablet',duration:'10분',qcount:'20',gami:[],target:'claude',extra:''};
+const EMPTY = {title:'',topic:'',content:'',std:'',grade:'e3',subject:'국어',subjectEtc:'',play:'solo',device:'tablet',duration:'10분',qcount:'20',gami:[],target:'claude',extra:'',video:'',rules:''};
 
 /* ---------- 화면 구성 ---------- */
 function chipGroup(el, items, single){
@@ -499,7 +515,8 @@ function readState(){
     title:$('#title').value.trim(), topic:$('#topic').value.trim(), content:$('#content').value.trim(), std:$('#std').value.trim(),
     grade:pressed('#grade')[0]||'', subject:$('#subject').value, subjectEtc:$('#subjectEtc').value.trim(),
     play:pressed('#play')[0]||'solo', device:$('#device').value, duration:$('#duration').value, qcount:$('#qcount').value,
-    gami:pressed('#gami'), target:(document.querySelector('input[name=target]:checked')||{}).value||'claude', extra:$('#extra').value.trim()
+    gami:pressed('#gami'), target:(document.querySelector('input[name=target]:checked')||{}).value||'claude', extra:$('#extra').value.trim(),
+    video:$('#video').value.trim(), rules:$('#rules').value.trim()
   };
 }
 function setChips(sel, ids){ document.querySelectorAll(sel+' .chip').forEach(c=>c.setAttribute('aria-pressed', ids.includes(c.dataset.id)?'true':'false')) }
@@ -509,7 +526,7 @@ function writeState(s){
   setChips('#play',[s.play]); $('#device').value=s.device; $('#duration').value=s.duration; $('#qcount').value=s.qcount;
   setChips('#gami', s.gami||[]);
   const t=document.querySelector(`input[name=target][value="${s.target}"]`); if(t) t.checked=true;
-  $('#extra').value=s.extra||'';
+  $('#extra').value=s.extra||''; $('#video').value=s.video||''; $('#rules').value=s.rules||'';
 }
 
 /* ---------- 프롬프트 조립 ---------- */
@@ -563,6 +580,10 @@ function buildSections(s){
     gBody+='\n\n[공통 원칙]\n'+bullets(common);
   } else {
     gBody=bullets(['학습 흐름을 방해하지 않는 최소한의 점수와 즉각 피드백만 넣음']);
+  }
+  if(s.rules){
+    const rl=s.rules.split('\n').map(l=>l.replace(/^\s*[-•·*]\s*/,'').trim()).filter(Boolean);
+    sec.push({tag:'original_rules',ko:'원작 규칙',body:'아래는 이 게임의 바탕이 되는 원작 보드게임 규칙입니다. 규칙을 기준으로 하되, 학년 수준에 맞게 단순화한 부분은 규칙 안내 화면에 밝혀 주세요.\n'+bullets(rl)+(s.video?`\n- 참고 영상: ${s.video}`:'')});
   }
   sec.push({tag:'gamification',ko:'게이미피케이션 요소',body:gBody});
 
@@ -709,12 +730,15 @@ function needKey(){
   setStatus('먼저 Gemini API 키를 입력하세요. 아래 연결 칸을 열어 두었습니다.','err');
   return true;
 }
-async function callGemini(prompt, temperature=0.6){
+async function callGemini(prompt, temperature=0.6, extra){
   const model=modelId();
   if(!model) throw new Error('모델 ID를 입력하세요.');
+  const parts=[{text:prompt}], generationConfig={temperature};
+  if(extra&&extra.video){ parts.unshift({fileData:{fileUri:extra.video}}); generationConfig.mediaResolution='MEDIA_RESOLUTION_LOW' }
+  if(extra&&extra.json) generationConfig.responseMimeType='application/json';
   const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{
     method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':keyVal()},
-    body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature}})
+    body:JSON.stringify({contents:[{role:'user',parts}],generationConfig})
   });
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
@@ -725,8 +749,8 @@ async function callGemini(prompt, temperature=0.6){
     if(res.status===429) throw new Error('무료 사용량 한도에 걸렸습니다. 잠시 후 다시 시도하거나 더 가벼운 모델(gemini-3.5-flash-lite)을 고르세요.');
     throw new Error(m);
   }
-  const parts=data.candidates?.[0]?.content?.parts||[];
-  const text=parts.filter(p=>!p.thought).map(p=>p.text||'').join('').trim();
+  const out=data.candidates?.[0]?.content?.parts||[];
+  const text=out.filter(p=>!p.thought).map(p=>p.text||'').join('').trim();
   if(!text) throw new Error('응답이 비어 있습니다. 다른 모델로 다시 시도해 보세요.');
   return text.replace(/^```[a-zA-Z]*\n?/,'').replace(/\n?```\s*$/,'').trim();
 }
@@ -800,6 +824,54 @@ ${s.content?'- 교사가 적어 둔 메모: '+s.content.replace(/\n/g,' / '):''}
   finally{ b.disabled=false }
 });
 $('#undoDraft').addEventListener('click',()=>{ if(draftBackup!==null){ $('#content').value=draftBackup; draftBackup=null; $('#undoDraft').hidden=true; update() } });
+
+/* ---------- 유튜브 영상에서 규칙 가져오기 ---------- */
+function ytUrl(u){
+  try{ const x=new URL(u.trim()); const h=x.hostname.replace(/^www\.|^m\./,'');
+    let id='';
+    if(h==='youtu.be') id=x.pathname.slice(1);
+    else if(h==='youtube.com'){ id=x.searchParams.get('v')||''; const m=x.pathname.match(/^\/(shorts|live|embed)\/([^/?]+)/); if(m) id=m[2] }
+    return /^[\w-]{6,}$/.test(id)?`https://www.youtube.com/watch?v=${id}`:null;
+  }catch(e){ return null }
+}
+let rulesBackup=null;
+$('#videoBtn').addEventListener('click',async()=>{
+  const v=ytUrl($('#video').value);
+  if(!v){ setStatus('유튜브 영상 주소를 넣어 주세요. (youtube.com/watch?v=… 또는 youtu.be/…)','err'); $('#video').focus(); return }
+  if(needKey()) return;
+  const s=readState(), g=GRADES.find(x=>x.id===s.grade)||GRADES[2];
+  const subject=s.subject==='기타(직접 입력)'?(s.subjectEtc||'기타'):s.subject;
+  const b=$('#videoBtn'); b.disabled=true; b.textContent='영상 보는 중…';
+  setStatus('Gemini가 영상을 보고 규칙을 정리하는 중입니다… (30초~2분)');
+  const meta=`이 영상은 보드게임 규칙 설명 영상이다. 영상에서 실제로 설명한 내용만 정리하라. 영상에 나오지 않은 규칙은 지어내지 말고 unclear에 적어라.
+아래 JSON 형식으로만 답하라.
+{
+ "title": "게임 이름 (영상에서 확인한 이름)",
+ "rules": ["[구성물] ...", "[준비] ...", "[차례 진행] ...", "[점수·승리] ...", "[특수 규칙] ..."],
+ "unclear": ["영상만으로는 확인되지 않은 점"],
+ "content": ["상황: ...", "행동: ...", "학습: ...", "종료: ..."]
+}
+- rules: 8~14개, 짧은 개조식 한국어, '~함'으로 끝냄. 같은 칸 이름([준비] 등)을 맨 앞에 붙임
+- content: 이 게임을 ${g.name} ${subject} 수업용 웹게임으로 만든다고 할 때의 '대략적인 내용' 4줄. 학습 줄에는 ${subject} 교과에서 연결되는 학습 내용을 씀
+- 수식어, 감탄, 인사말 없이 씀`;
+  try{
+    const raw=await callGemini(meta,0.3,{video:v,json:true});
+    let j; try{ j=JSON.parse(raw) }catch(e){ const m=raw.match(/\{[\s\S]*\}/); j=m?JSON.parse(m[0]):null }
+    if(!j||!Array.isArray(j.rules)||!j.rules.length) throw new Error('영상에서 규칙을 정리하지 못했습니다. 규칙 설명이 담긴 다른 영상으로 시도해 보세요.');
+    rulesBackup={rules:$('#rules').value,content:$('#content').value,title:$('#title').value};
+    const unclear=(j.unclear||[]).filter(Boolean).map(x=>`[확인 필요] ${x}`);
+    $('#rules').value=j.rules.concat(unclear).map(x=>'- '+String(x).trim()).join('\n');
+    if(Array.isArray(j.content)&&j.content.length&&!$('#content').value.trim()) $('#content').value=j.content.map(x=>'- '+String(x).trim()).join('\n');
+    if(j.title&&!$('#title').value.trim()) $('#title').value=String(j.title).trim();
+    $('#video').value=v; $('#undoRules').hidden=false; update();
+    setStatus(`영상에서 규칙 ${j.rules.length}개를 가져왔습니다.${unclear.length?` [확인 필요] ${unclear.length}개는 직접 확인하세요.`:''} 영상 내용과 다른 곳이 없는지 꼭 읽어 보세요.`,'ok');
+  }catch(e){
+    let msg=netError(e);
+    if(/fileData|file_uri|fileUri|video|youtube|unsupported/i.test(e.message||'')) msg='이 모델이나 영상은 처리할 수 없습니다. 공개 영상인지 확인하고, 모델을 gemini-3.8-flash로 바꿔 다시 시도해 보세요.';
+    setStatus(msg,'err');
+  }finally{ b.disabled=false; b.textContent='영상에서 규칙 가져오기' }
+});
+$('#undoRules').addEventListener('click',()=>{ if(rulesBackup){ $('#rules').value=rulesBackup.rules; $('#content').value=rulesBackup.content; $('#title').value=rulesBackup.title; rulesBackup=null; $('#undoRules').hidden=true; update() } });
 
 
 /* ---------- 키 발급 안내 ---------- */
